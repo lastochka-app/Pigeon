@@ -2,135 +2,92 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Messenger by Nickname</title>
+    <title>Messenger Fix</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-
-    <h1>Мессенджер по никам</h1>
+    <h1>Чат по никнеймам</h1>
 
     <div id="auth-section">
-        <input type="text" id="nickname" placeholder="Ваш ник (мин. 3 символа)">
-        <input type="password" id="password" placeholder="Пароль">
+        <input type="text" id="nick" placeholder="Никнейм">
+        <input type="password" id="pass" placeholder="Пароль">
         <br><br>
-        <button onclick="handleAuth('signUp')">Зарегистрироваться</button>
-        <button onclick="handleAuth('signIn')">Войти</button>
+        <button onclick="auth('signUp')">Регистрация</button>
+        <button onclick="auth('signIn')">Войти</button>
     </div>
 
-    <div id="chat-section" style="display: none;">
-        <p>Привет, <b id="user-display"></b>! <button onclick="signOut()">Выйти</button></p>
-        <hr>
-        <div id="messages-container" style="height: 400px; overflow-y: scroll; border: 2px solid #000; padding: 10px;"></div>
-        <br>
-        <input type="text" id="message-input" placeholder="Сообщение..." style="width: 70%;">
-        <button onclick="sendMessage()">Отправить</button>
+    <div id="chat-section" style="display:none;">
+        <p>Вы: <b id="display-nick"></b> <button onclick="logout()">Выход</button></p>
+        <div id="messages" style="height:300px; border:1px solid gray; overflow-y:scroll; padding:10px; margin-bottom:10px;"></div>
+        <input type="text" id="msg-input" placeholder="Сообщение..." onkeypress="if(event.key==='Enter') send()">
+        <button onclick="send()">Отправить</button>
     </div>
 
     <script>
-        const SUPABASE_URL = 'https://azjivomqimxhfztljsdm.supabase.co';
-        const SUPABASE_KEY = 'sb_publishable_aQfjcnfrBIHlmB8tGXyuHw_W_TscQIA';
-        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        const client = supabase.createClient('https://azjivomqimxhfztljsdm.supabase.co', 'sb_publishable_aQfjcnfrBIHlmB8tGXyuHw_W_TscQIA');
+        let myNick = "";
 
-        let myNickname = "";
-
-        // Основная функция для входа и регистрации
-        async function handleAuth(type) {
-            const nick = document.getElementById('nickname').value.trim().toLowerCase();
-            const pass = document.getElementById('password').value;
-            const fakeEmail = `${nick}@chat.com`;
-
-            if (nick.length < 3) return alert("Ник слишком короткий!");
+        async function auth(type) {
+            const username = document.getElementById('nick').value.trim();
+            const password = document.getElementById('pass').value;
+            const email = `${username.toLowerCase()}@test.com`;
 
             if (type === 'signUp') {
-                // 1. Проверяем, занят ли ник в таблице profiles
-                const { data: existing } = await supabase
-                    .from('profiles')
-                    .select('username')
-                    .eq('username', nick)
-                    .single();
-
-                if (existing) return alert("Этот ник уже занят!");
-
-                // 2. Регистрация в Auth
-                const { data, error } = await supabase.auth.signUp({ email: fakeEmail, password: pass });
-                if (error) return alert(error.message);
-
-                // 3. Создание записи в profiles
-                if (data.user) {
-                    const { error: profError } = await supabase
-                        .from('profiles')
-                        .insert([{ id: data.user.id, username: nick }]);
-                    
-                    if (profError) return alert("Ошибка создания профиля: " + profError.message);
-                    alert("Регистрация успешна! Теперь нажмите 'Войти'");
-                }
+                const { data, error } = await client.auth.signUp({ email, password });
+                if (error) return alert("Ошибка регистрации: " + error.message);
+                
+                // Сразу создаем профиль
+                const { error: pErr } = await client.from('profiles').insert([{ id: data.user.id, username }]);
+                if (pErr) console.log("Профиль уже есть или ошибка:", pErr.message);
+                
+                alert("Готово! Теперь нажми Войти");
             } else {
-                // Вход
-                const { data, error } = await supabase.auth.signInWithPassword({ email: fakeEmail, password: pass });
-                if (error) alert("Ошибка входа: " + error.message);
-                else checkUser();
+                const { data, error } = await client.auth.signInWithPassword({ email, password });
+                if (error) return alert("Ошибка входа: " + error.message);
+                checkUser();
             }
-        }
-
-        async function signOut() {
-            await supabase.auth.signOut();
-            location.reload();
         }
 
         async function checkUser() {
-            const { data: { user } } = await supabase.auth.getUser();
+            const { data: { user } } = await client.auth.getUser();
             if (user) {
-                // Узнаем ник пользователя из базы
-                const { data } = await supabase.from('profiles').select('username').eq('id', user.id).single();
-                myNickname = data.username;
-                
-                document.getElementById('auth-section').style.display = 'none';
-                document.getElementById('chat-section').style.display = 'block';
-                document.getElementById('user-display').innerText = myNickname;
-                
-                loadMessages();
-                subscribe();
+                const { data: p } = await client.from('profiles').select('username').eq('id', user.id).single();
+                if (p) {
+                    myNick = p.username;
+                    document.getElementById('auth-section').style.display = 'none';
+                    document.getElementById('chat-section').style.display = 'block';
+                    document.getElementById('display-nick').innerText = myNick;
+                    load();
+                    subscribe();
+                }
             }
         }
 
-        async function loadMessages() {
-            const { data } = await supabase.from('messages').select('*').order('created_at', { ascending: true });
-            if (data) {
-                const container = document.getElementById('messages-container');
-                container.innerHTML = '';
-                data.forEach(msg => addMessageToUI(msg));
-            }
+        async function load() {
+            const { data } = await client.from('messages').select('*').order('created_at', { ascending: true });
+            const div = document.getElementById('messages');
+            div.innerHTML = '';
+            data?.forEach(m => div.innerHTML += `<div><b>${m.author_nickname}:</b> ${m.content}</div>`);
+            div.scrollTop = div.scrollHeight;
         }
 
-        async function sendMessage() {
-            const input = document.getElementById('message-input');
+        async function send() {
+            const input = document.getElementById('msg-input');
             if (!input.value) return;
-
-            const { error } = await supabase
-                .from('messages')
-                .insert([{ content: input.value, author_nickname: myNickname }]);
-
-            if (error) alert(error.message);
+            const { error } = await client.from('messages').insert([{ content: input.value, author_nickname: myNick }]);
+            if (error) alert("Ошибка отправки: " + error.message);
             input.value = '';
         }
 
-        function addMessageToUI(msg) {
-            const container = document.getElementById('messages-container');
-            const div = document.createElement('div');
-            div.style.marginBottom = "5px";
-            div.innerHTML = `<b>${msg.author_nickname}:</b> ${msg.content}`;
-            container.appendChild(div);
-            container.scrollTop = container.scrollHeight;
+        function subscribe() {
+            client.channel('any').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
+                const div = document.getElementById('messages');
+                div.innerHTML += `<div><b>${payload.new.author_nickname}:</b> ${payload.new.content}</div>`;
+                div.scrollTop = div.scrollHeight;
+            }).subscribe();
         }
 
-        function subscribe() {
-            supabase
-                .channel('room1')
-                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
-                    addMessageToUI(payload.new);
-                })
-                .subscribe();
-        }
+        function logout() { client.auth.signOut(); location.reload(); }
 
         checkUser();
     </script>
