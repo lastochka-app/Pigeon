@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Supabase Messenger</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+    <h1>Мессенджер (Без CSS)</h1>
+
+    <div id="auth-section">
+        <h3>Вход / Регистрация</h3>
+        <input type="email" id="email" placeholder="Email">
+        <input type="password" id="password" placeholder="Пароль">
+        <br><br>
+        <button onclick="signUp()">Зарегистрироваться</button>
+        <button onclick="signIn()">Войти</button>
+    </div>
+
+    <div id="chat-section" style="display: none;">
+        <p>Вы вошли как: <b id="user-display"></b> <button onclick="signOut()">Выйти</button></p>
+        
+        <hr>
+        
+        <div id="messages-container" style="height: 300px; overflow-y: scroll; border: 1px solid black; padding: 10px;">
+            </div>
+
+        <br>
+        <input type="text" id="message-input" placeholder="Введите сообщение..." style="width: 80%;">
+        <button onclick="sendMessage()">Отправить</button>
+    </div>
+
+    <script>
+        // Инициализация Supabase
+        const SUPABASE_URL = 'https://azjivomqimxhfztljsdm.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_aQfjcnfrBIHlmB8tGXyuHw_W_TscQIA';
+        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        let currentUser = null;
+
+        // --- ФУНКЦИИ АВТОРИЗАЦИИ ---
+
+        async function signUp() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const { data, error } = await supabase.auth.signUp({ email, password });
+            if (error) alert(error.message);
+            else alert('Проверьте почту для подтверждения регистрации!');
+        }
+
+        async function signIn() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+            if (error) alert(error.message);
+            else checkUser();
+        }
+
+        async function signOut() {
+            await supabase.auth.signOut();
+            checkUser();
+        }
+
+        // Проверка состояния пользователя
+        async function checkUser() {
+            const { data: { user } } = await supabase.auth.getUser();
+            currentUser = user;
+
+            if (user) {
+                document.getElementById('auth-section').style.display = 'none';
+                document.getElementById('chat-section').style.display = 'block';
+                document.getElementById('user-display').innerText = user.email;
+                loadMessages();
+                subscribeToMessages();
+            } else {
+                document.getElementById('auth-section').style.display = 'block';
+                document.getElementById('chat-section').style.display = 'none';
+            }
+        }
+
+        // --- ФУНКЦИИ ЧАТА ---
+
+        // Загрузка истории сообщений
+        async function loadMessages() {
+            const { data, error } = await supabase
+                .from('messages')
+                .select('*')
+                .order('created_at', { ascending: true });
+
+            if (error) console.error('Ошибка загрузки:', error);
+            else {
+                const container = document.getElementById('messages-container');
+                container.innerHTML = '';
+                data.forEach(msg => appendMessage(msg));
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+
+        // Отправка сообщения
+        async function sendMessage() {
+            const input = document.getElementById('message-input');
+            const content = input.value;
+            if (!content) return;
+
+            const { error } = await supabase
+                .from('messages')
+                .insert([{ 
+                    content: content, 
+                    user_email: currentUser.email 
+                }]);
+
+            if (error) alert(error.message);
+            else input.value = '';
+        }
+
+        // Отрисовка сообщения в списке
+        function appendMessage(msg) {
+            const container = document.getElementById('messages-container');
+            const msgDiv = document.createElement('div');
+            msgDiv.innerHTML = `<strong>${msg.user_email}:</strong> ${msg.content}`;
+            container.appendChild(msgDiv);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // Подписка на обновления в реальном времени
+        function subscribeToMessages() {
+            supabase
+                .channel('public:messages')
+                .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
+                    appendMessage(payload.new);
+                })
+                .subscribe();
+        }
+
+        // Запуск проверки при загрузке страницы
+        checkUser();
+    </script>
+</body>
+</html>
