@@ -2,138 +2,136 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <title>Supabase Messenger</title>
+    <title>Messenger by Nickname</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
-    <h1>Мессенджер (Без CSS)</h1>
+    <h1>Мессенджер по никам</h1>
 
     <div id="auth-section">
-        <h3>Вход / Регистрация</h3>
-        <input type="email" id="email" placeholder="Email">
+        <input type="text" id="nickname" placeholder="Ваш ник (мин. 3 символа)">
         <input type="password" id="password" placeholder="Пароль">
         <br><br>
-        <button onclick="signUp()">Зарегистрироваться</button>
-        <button onclick="signIn()">Войти</button>
+        <button onclick="handleAuth('signUp')">Зарегистрироваться</button>
+        <button onclick="handleAuth('signIn')">Войти</button>
     </div>
 
     <div id="chat-section" style="display: none;">
-        <p>Вы вошли как: <b id="user-display"></b> <button onclick="signOut()">Выйти</button></p>
-        
+        <p>Привет, <b id="user-display"></b>! <button onclick="signOut()">Выйти</button></p>
         <hr>
-        
-        <div id="messages-container" style="height: 300px; overflow-y: scroll; border: 1px solid black; padding: 10px;">
-            </div>
-
+        <div id="messages-container" style="height: 400px; overflow-y: scroll; border: 2px solid #000; padding: 10px;"></div>
         <br>
-        <input type="text" id="message-input" placeholder="Введите сообщение..." style="width: 80%;">
+        <input type="text" id="message-input" placeholder="Сообщение..." style="width: 70%;">
         <button onclick="sendMessage()">Отправить</button>
     </div>
 
     <script>
-        // Инициализация Supabase
         const SUPABASE_URL = 'https://azjivomqimxhfztljsdm.supabase.co';
         const SUPABASE_KEY = 'sb_publishable_aQfjcnfrBIHlmB8tGXyuHw_W_TscQIA';
         const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-        let currentUser = null;
+        let myNickname = "";
 
-        // --- ФУНКЦИИ АВТОРИЗАЦИИ ---
+        // Основная функция для входа и регистрации
+        async function handleAuth(type) {
+            const nick = document.getElementById('nickname').value.trim().toLowerCase();
+            const pass = document.getElementById('password').value;
+            const fakeEmail = `${nick}@chat.com`;
 
-        async function signUp() {
-            const email = document.getElementById('email').value;
-            const password = document.getElementById('password').value;
-            const { data, error } = await supabase.auth.signUp({ email, password });
-            if (error) alert(error.message);
-            else alert('Проверьте почту для подтверждения регистрации!');
-        }
+            if (nick.length < 3) return alert("Ник слишком короткий!");
 
-        async function signIn() {
-            const email = document.getElementById('email').value;
-            const password = document.getElementById('password').value;
-            const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-            if (error) alert(error.message);
-            else checkUser();
+            if (type === 'signUp') {
+                // 1. Проверяем, занят ли ник в таблице profiles
+                const { data: existing } = await supabase
+                    .from('profiles')
+                    .select('username')
+                    .eq('username', nick)
+                    .single();
+
+                if (existing) return alert("Этот ник уже занят!");
+
+                // 2. Регистрация в Auth
+                const { data, error } = await supabase.auth.signUp({ email: fakeEmail, password: pass });
+                if (error) return alert(error.message);
+
+                // 3. Создание записи в profiles
+                if (data.user) {
+                    const { error: profError } = await supabase
+                        .from('profiles')
+                        .insert([{ id: data.user.id, username: nick }]);
+                    
+                    if (profError) return alert("Ошибка создания профиля: " + profError.message);
+                    alert("Регистрация успешна! Теперь нажмите 'Войти'");
+                }
+            } else {
+                // Вход
+                const { data, error } = await supabase.auth.signInWithPassword({ email: fakeEmail, password: pass });
+                if (error) alert("Ошибка входа: " + error.message);
+                else checkUser();
+            }
         }
 
         async function signOut() {
             await supabase.auth.signOut();
-            checkUser();
+            location.reload();
         }
 
-        // Проверка состояния пользователя
         async function checkUser() {
             const { data: { user } } = await supabase.auth.getUser();
-            currentUser = user;
-
             if (user) {
+                // Узнаем ник пользователя из базы
+                const { data } = await supabase.from('profiles').select('username').eq('id', user.id).single();
+                myNickname = data.username;
+                
                 document.getElementById('auth-section').style.display = 'none';
                 document.getElementById('chat-section').style.display = 'block';
-                document.getElementById('user-display').innerText = user.email;
+                document.getElementById('user-display').innerText = myNickname;
+                
                 loadMessages();
-                subscribeToMessages();
-            } else {
-                document.getElementById('auth-section').style.display = 'block';
-                document.getElementById('chat-section').style.display = 'none';
+                subscribe();
             }
         }
 
-        // --- ФУНКЦИИ ЧАТА ---
-
-        // Загрузка истории сообщений
         async function loadMessages() {
-            const { data, error } = await supabase
-                .from('messages')
-                .select('*')
-                .order('created_at', { ascending: true });
-
-            if (error) console.error('Ошибка загрузки:', error);
-            else {
+            const { data } = await supabase.from('messages').select('*').order('created_at', { ascending: true });
+            if (data) {
                 const container = document.getElementById('messages-container');
                 container.innerHTML = '';
-                data.forEach(msg => appendMessage(msg));
-                container.scrollTop = container.scrollHeight;
+                data.forEach(msg => addMessageToUI(msg));
             }
         }
 
-        // Отправка сообщения
         async function sendMessage() {
             const input = document.getElementById('message-input');
-            const content = input.value;
-            if (!content) return;
+            if (!input.value) return;
 
             const { error } = await supabase
                 .from('messages')
-                .insert([{ 
-                    content: content, 
-                    user_email: currentUser.email 
-                }]);
+                .insert([{ content: input.value, author_nickname: myNickname }]);
 
             if (error) alert(error.message);
-            else input.value = '';
+            input.value = '';
         }
 
-        // Отрисовка сообщения в списке
-        function appendMessage(msg) {
+        function addMessageToUI(msg) {
             const container = document.getElementById('messages-container');
-            const msgDiv = document.createElement('div');
-            msgDiv.innerHTML = `<strong>${msg.user_email}:</strong> ${msg.content}`;
-            container.appendChild(msgDiv);
+            const div = document.createElement('div');
+            div.style.marginBottom = "5px";
+            div.innerHTML = `<b>${msg.author_nickname}:</b> ${msg.content}`;
+            container.appendChild(div);
             container.scrollTop = container.scrollHeight;
         }
 
-        // Подписка на обновления в реальном времени
-        function subscribeToMessages() {
+        function subscribe() {
             supabase
-                .channel('public:messages')
+                .channel('room1')
                 .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
-                    appendMessage(payload.new);
+                    addMessageToUI(payload.new);
                 })
                 .subscribe();
         }
 
-        // Запуск проверки при загрузке страницы
         checkUser();
     </script>
 </body>
